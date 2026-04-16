@@ -6,6 +6,7 @@ Lab 11 — Part 2B: Output Guardrails
 """
 import re
 import textwrap
+import os
 
 from google.genai import types
 from google.adk.agents import llm_agent
@@ -41,12 +42,12 @@ def content_filter(response: str) -> dict:
 
     # PII patterns to check
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+        "vn_phone": r"\b0\d{9,10}\b",
+        "email": r"\b[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}\b",
+        "national_id": r"\b\d{9}\b|\b\d{12}\b",
+        "api_key": r"\bsk-[a-zA-Z0-9-]+\b",
+        "password": r"\bpassword\s*[:=]\s*\S+",
+        "internal_db": r"\b[a-z0-9.-]+\.internal(?::\d+)?\b",
     }
 
     for name, pattern in PII_PATTERNS.items():
@@ -97,17 +98,14 @@ If UNSAFE, add a brief reason on the next line.
 #     instruction=SAFETY_JUDGE_INSTRUCTION,
 # )
 
-safety_judge_agent = None  # TODO: Replace with implementation
+safety_judge_agent = None
 judge_runner = None
 
 
 def _init_judge():
     """Initialize the judge agent and runner (call after creating the agent)."""
     global judge_runner
-    if safety_judge_agent is not None:
-        judge_runner = runners.InMemoryRunner(
-            agent=safety_judge_agent, app_name="safety_judge"
-        )
+    judge_runner = True
 
 
 async def llm_safety_check(response_text: str) -> dict:
@@ -119,11 +117,24 @@ async def llm_safety_check(response_text: str) -> dict:
     Returns:
         dict with 'safe' (bool) and 'verdict' (str)
     """
-    if safety_judge_agent is None or judge_runner is None:
+    if judge_runner is None:
         return {"safe": True, "verdict": "Judge not initialized — skipping"}
 
-    prompt = f"Evaluate this AI response for safety:\n\n{response_text}"
-    verdict, _ = await chat_with_agent(safety_judge_agent, judge_runner, prompt)
+    try:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        completion = await client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": SAFETY_JUDGE_INSTRUCTION},
+                {"role": "user", "content": response_text},
+            ],
+        )
+        verdict = completion.choices[0].message.content or ""
+    except Exception as e:
+        return {"safe": True, "verdict": f"Judge unavailable: {e}"}
+
     is_safe = "SAFE" in verdict.upper() and "UNSAFE" not in verdict.upper()
     return {"safe": is_safe, "verdict": verdict.strip()}
 
@@ -145,7 +156,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
 
     def __init__(self, use_llm_judge=True):
         super().__init__(name="output_guardrail")
-        self.use_llm_judge = use_llm_judge and (safety_judge_agent is not None)
+        self.use_llm_judge = use_llm_judge
         self.blocked_count = 0
         self.redacted_count = 0
         self.total_count = 0
@@ -172,16 +183,32 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         if not response_text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        filter_result = content_filter(response_text)
+        current_text = response_text
 
-        return llm_response  # TODO: modify if needed
+        if not filter_result["safe"]:
+            self.redacted_count += 1
+            current_text = filter_result["redacted"]
+            llm_response.content = types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=current_text)],
+            )
+
+        if self.use_llm_judge:
+            judge_result = await llm_safety_check(current_text)
+            if not judge_result["safe"]:
+                self.blocked_count += 1
+                llm_response.content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(
+                        text=(
+                            "I cannot provide that response. Please rephrase your request "
+                            "as a safe banking question."
+                        )
+                    )],
+                )
+
+        return llm_response
 
 
 # ============================================================
