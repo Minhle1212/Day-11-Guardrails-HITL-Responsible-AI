@@ -52,7 +52,7 @@ Day-11-Guardrails-HITL-Responsible-AI/
 
 ```bash
 pip install -r requirements.txt
-export GOOGLE_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-api-key-here"
 jupyter notebook notebooks/lab11_guardrails_hitl.ipynb
 ```
 
@@ -61,7 +61,7 @@ jupyter notebook notebooks/lab11_guardrails_hitl.ipynb
 ```bash
 cd src/
 pip install -r ../requirements.txt
-export GOOGLE_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-api-key-here"
 
 # Run the full lab
 python main.py
@@ -83,7 +83,7 @@ python hitl/hitl.py
 
 - **Google ADK** — Agent Development Kit (plugins, runners)
 - **NeMo Guardrails** — NVIDIA framework with Colang (declarative safety rules)
-- **Gemini 2.5 Flash/Flash Lite** — LLM backend (you can switch to other models if you want)
+- **OpenAI GPT models** — LLM backend for this local setup
 
 ## Lab Structure (2.5 hours)
 
